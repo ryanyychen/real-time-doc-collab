@@ -1,0 +1,17 @@
+{
+  "name": "real-time-doc-collab",
+  "version": "1.0.0",
+  "description": "Simple real-time collaboration on same document",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "workspaces": [
+    "backend-api",
+    "backend-realtime",
+    "frontend"
+  ]
+}

@@ -13,5 +13,9 @@
     "backend-api",
     "backend-realtime",
     "frontend"
-  ]
+  ],
+  "dependencies": {
+    "pg": "^8.16.3",
+    "postgresql-client": "^2.13.0"
+  }
 }

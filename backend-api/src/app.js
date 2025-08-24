@@ -1,3 +1,4 @@
+import cors from "cors";
 import { Pool } from "pg";
 import dotenv from "dotenv";
 import express from "express";
@@ -20,8 +21,10 @@ const pool = new Pool({
     console.error("❌ Connection failed:", err.message);
   }
 })();
+
 const app = express();
 app.use(express.json());
+app.use(cors());
 
 /*
  * Create a new document
@@ -29,8 +32,8 @@ app.use(express.json());
  */
 app.post("/create_document", async (req, res) => {
     const { title, content } = req.body;
-    if (!title || !content) {
-        return res.status(400).json({ error: "Title and content are required." });
+    if (!title) {
+        return res.status(400).json({ error: "Title is required." });
     }
     try {
         const result = await pool.query(
@@ -39,7 +42,7 @@ app.post("/create_document", async (req, res) => {
              RETURNING id, title, content, created_at, updated_at`,
             [title, content]
         );
-        res.status(201).json("Insert Successful");
+        res.status(201).json(result.rows[0]);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -85,8 +88,8 @@ app.get("/document/:id", async (req, res) => {
 app.post("/document/:id", async (req, res) => {
     const { id } = req.params;
     const { title, content } = req.body;
-    if (!title || !content) {
-        return res.status(400).json({ error: "Title and content are required." });
+    if (!title) {
+        return res.status(400).json({ error: "Title is required." });
     }
     try {
         const result = await pool.query(
@@ -116,7 +119,7 @@ app.delete("/document/:id", async (req, res) => {
             return res.status(404).json({ error: "Document not found." });
         }
 
-        res.status(200).json({ message: "document deleted successfully.", deleted: result.rows[0] });
+        res.status(200).json({ message: "Document deleted successfully.", success: true, deleted: result.rows[0] });
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: "Internal server error." });

@@ -6,12 +6,11 @@ import { useParams } from "next/navigation";
 import TextEditor from "@/components/TextEditor";
 
 export default function EditorPage() {
-    const apiURL = process.env.NEXT_PUBLIC_API_URL;
     const { socket } = useSocket();
     const params = useParams();
     const documentID = Number(params.id);
 
-    const [doc, setDoc] = useState<any>(null);
+    const [doc, setDoc] = useState<{ title: string; delta: any } | null>(null);
 
     // Join and leave document room
     useEffect(() => {
@@ -19,12 +18,14 @@ export default function EditorPage() {
 
         socket.emit("join-document", { documentID });
 
-        // Fetch document data
-        fetch(`${apiURL}/document/${documentID}`)
-            .then((res) => res.json())
-            .then((data) => setDoc(data));
+        const handleJoin = (payload: { title: string; delta: any }) => {
+            setDoc({ title: payload.title, delta: payload.delta });
+        }
+
+        socket.on("document-joined", handleJoin);
 
         return () => {
+            socket.off("document-joined", handleJoin);
             socket.emit("leave-document", { documentID });
         }
     }, [socket, documentID]);
@@ -39,9 +40,9 @@ export default function EditorPage() {
             <TextEditor
                 documentID={documentID}
                 title={doc.title}
-                content={doc.content}
+                delta={doc.delta}
                 socket={socket!}
             />
         </div>
-    )
+    );
 }

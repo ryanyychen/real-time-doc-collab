@@ -8,19 +8,19 @@ import "quill/dist/quill.snow.css";
 interface TextEditorProps {
     documentID: number;
     title: string;
-    content: string;
+    delta: any;
     socket: Socket;
 }
 
-const TextEditor: React.FC<TextEditorProps> = ({ documentID, title, content, socket }) => {
+const TextEditor: React.FC<TextEditorProps> = ({ documentID, title, delta, socket }) => {
     const { quill, quillRef } = useQuill();
 
     // Populate text editor with previously saved content
     useEffect(() => {
-        if (quill && content) {
-            quill.setText(content);
+        if (quill && delta) {
+            quill.setContents(delta);
         }
-    }, [quill, content]);
+    }, [quill, delta]);
 
     // Track content changes
     useEffect(() => {

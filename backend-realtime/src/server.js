@@ -3,98 +3,135 @@ import { Server } from "socket.io";
 import dotenv from "dotenv";
 import axios from "axios";
 import DeltaPkg from "quill-delta";
-const Delta = DeltaPkg;
+import { createClient } from "redis";
 
+const Delta = DeltaPkg;
 dotenv.config();
+
+// Setup Redis client
+const redisClient = createClient({
+  url: process.env.REDIS_URL || "redis://localhost:6379",
+});
+redisClient.on("error", (err) => console.error("Redis Client Error", err));
+await redisClient.connect();
+
 const httpServer = createServer();
 const io = new Server(httpServer, { cors: { origin: "*" } });
-const editBuffer = {};
-const documentState = {};
 
-// Populate documentState by fetching documents from database
+// Populate Redis with documents from DB
 const fetchDocuments = async () => {
-    try {
-        const response = await axios.get(`${process.env.API_URL}/documents`);
-        response.data.forEach(doc => {
-            documentState[doc.id] = { title: doc.title, content: doc.content };
-        });
-    } catch (error) {
-        console.error("Error fetching documents:", error.message);
+  try {
+    const response = await axios.get(`${process.env.API_URL}/documents`);
+    for (const doc of response.data) {
+      await redisClient.hSet(`document:${doc.id}`, {
+        title: doc.title,
+        content: doc.content,
+      });
     }
+  } catch (error) {
+    console.error("Error fetching documents:", error.message);
+  }
 };
-
 fetchDocuments();
 
 io.on("connection", (socket) => {
-    console.log("Client connected:", socket.id);
+  console.log("Client connected:", socket.id);
 
-    socket.documents = new Set();
+  socket.documents = new Set();
 
-    // Join document
-    socket.on("join-document", (data) => {
-        const documentID = data.documentID;
-        socket.join(documentID);
-        socket.documents.add(documentID);
-        console.log(`Socket ${socket.id} joined document ${documentID}`);
-    });
+  // Join document
+  socket.on("join-document", async ({ documentID }) => {
+    socket.join(documentID);
+    socket.documents.add(documentID);
+    console.log(`Socket ${socket.id} joined document ${documentID}`);
 
-    // Leave document
-    socket.on("leave-document", (data) => {
-        const documentID = data.documentID;
-        socket.leave(documentID);
-        socket.documents.delete(documentID);
-        console.log(`Socket ${socket.id} left document ${documentID}`);
-    })
+    const docKey = `document:${documentID}`;
+    let title = await redisClient.hGet(docKey, "title");
+    let latestContent = await redisClient.hGet(docKey, "content");
 
-    // Handle document edits
-    socket.on("edit", ({ documentID, title, delta }) => {
-        if (!documentState[documentID]) documentState[documentID] = { title: "", content: "" };
-        if (title !== undefined && title !== null) {
-            documentState[documentID].title = title;
-        }
+    socket.emit("document-joined", { title, delta: [{ insert: latestContent }] });
+  });
 
-        if (delta) {
-            documentState[documentID].content = applyDelta(
-                documentState[documentID].content,
-                delta
-            );
+  // Leave document
+  socket.on("leave-document", ({ documentID }) => {
+    socket.leave(documentID);
+    socket.documents.delete(documentID);
+    console.log(`Socket ${socket.id} left document ${documentID}`);
+  });
 
-            if (!editBuffer[documentID]) editBuffer[documentID] = [];
-            editBuffer[documentID].push(delta);
+  // Handle document edits
+  socket.on("edit", async ({ documentID, title, delta }) => {
+    // Fetch existing state from Redis
+    let doc = await redisClient.hGetAll(`document:${documentID}`);
+    if (!doc || Object.keys(doc).length === 0) {
+      doc = { title: "", content: "" };
+    }
 
-            socket.to(documentID).emit("update-document", delta);
-        }
-    });
+    if (title !== undefined && title !== null) {
+      doc.title = title;
+    }
 
-    // Handle disconnection
-    socket.on("disconnect", () => {
-        for (const docID of socket.documents) {
-            socket.leave(docID);
-            console.log(`Socket ${socket.id} left document ${docID}`);
-        }
-        console.log(`Socket ${socket.id} disconnected`);
-    })
+    if (delta) {
+      doc.content = applyDelta(doc.content || "", delta);
+
+      // Save updated state to Redis
+      await redisClient.hSet(`document:${documentID}`, {
+        title: doc.title,
+        content: doc.content,
+      });
+
+      // Push delta into buffer list
+      await redisClient.rPush(
+        `editBuffer:${documentID}`,
+        JSON.stringify(delta)
+      );
+
+      // Broadcast delta to other clients
+      socket.to(documentID).emit("update-document", delta);
+    }
+  });
+
+  // Handle disconnection
+  socket.on("disconnect", () => {
+    for (const docID of socket.documents) {
+      socket.leave(docID);
+      console.log(`Socket ${socket.id} left document ${docID}`);
+    }
+    console.log(`Socket ${socket.id} disconnected`);
+  });
 });
 
 // Apply delta to document content
 function applyDelta(contentString, delta) {
-    const currentDelta = new Delta([{ insert: contentString }]);
-    const newDelta = currentDelta.compose(new Delta(delta));
-    return newDelta.ops.map(op => op.insert).join('');
+  const currentDelta = new Delta([{ insert: contentString }]);
+  const newDelta = currentDelta.compose(new Delta(delta));
+  return newDelta.ops.map((op) => op.insert).join("");
 }
 
-// Save to database
+// Save to database every 10s
 setInterval(async () => {
-    for (const [documentID, deltas] of Object.entries(editBuffer)) {
-        if (deltas.length === 0) continue;
-        try {
-            const { title, content } = documentState[documentID];
-            await axios.post(`${process.env.API_URL}/document/${documentID}`, { title, content });
-            editBuffer[documentID] = [];
-        } catch (error) {
-            console.error("Failed to save edits:", error.message);
-        }
+  try {
+    const keys = await redisClient.keys("editBuffer:*");
+    for (const key of keys) {
+      const documentID = key.split(":")[1];
+      const deltas = await redisClient.lRange(key, 0, -1);
+
+      if (deltas.length === 0) continue;
+
+      const doc = await redisClient.hGetAll(`document:${documentID}`);
+      if (!doc) continue;
+
+      await axios.post(`${process.env.API_URL}/document/${documentID}`, {
+        title: doc.title,
+        content: doc.content,
+      });
+
+      // Clear buffer after saving
+      await redisClient.del(key);
     }
+  } catch (error) {
+    console.error("Failed to save edits:", error.message);
+  }
 }, 10000);
 
 const PORT = process.env.PORT || 4000;

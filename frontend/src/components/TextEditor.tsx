@@ -56,6 +56,23 @@ const TextEditor: React.FC<TextEditorProps> = ({ documentID, title, content, soc
         };
     }, [quill, documentID, title, socket]);
 
+    // Update document as broadcast by server
+    useEffect(() => {
+        const handleUpdate = (delta: any) => {
+            console.log("Delta:", delta);
+            if (!delta) return;
+            if (quill) {
+                quill.updateContents(delta);
+            }
+        };
+
+        socket.on("update-document", handleUpdate);
+
+        return () => {
+            socket.off("update-document", handleUpdate)
+        }
+    }, [quill, documentID, socket])
+
     return (
         <div className="h-[80vh]">
             <div ref={quillRef} />

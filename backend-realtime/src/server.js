@@ -31,14 +31,16 @@ io.on("connection", (socket) => {
     socket.documents = new Set();
 
     // Join document
-    socket.on("join-document", (documentID) => {
+    socket.on("join-document", (data) => {
+        const documentID = data.documentID;
         socket.join(documentID);
         socket.documents.add(documentID);
         console.log(`Socket ${socket.id} joined document ${documentID}`);
     });
 
     // Leave document
-    socket.on("leave-document", (documentID) => {
+    socket.on("leave-document", (data) => {
+        const documentID = data.documentID;
         socket.leave(documentID);
         socket.documents.delete(documentID);
         console.log(`Socket ${socket.id} left document ${documentID}`);
@@ -60,7 +62,7 @@ io.on("connection", (socket) => {
             if (!editBuffer[documentID]) editBuffer[documentID] = [];
             editBuffer[documentID].push(delta);
 
-            socket.to(documentID).emit("edit", delta);
+            socket.to(documentID).emit("update-document", delta);
         }
     });
 
